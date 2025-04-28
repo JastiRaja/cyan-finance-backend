@@ -24,7 +24,7 @@ async function sendOtpEmail(email, otp) {
   });
 }
 
-// @route   GET /api/auth/validate
+// @route   GET /auth/validate
 // @desc    Validate authentication token
 router.get('/validate', auth, async (req, res) => {
     try {
@@ -47,7 +47,7 @@ router.get('/validate', auth, async (req, res) => {
     }
 });
 
-// @route   POST /api/auth/register
+// @route   POST /auth/register
 // @desc    Register user
 router.post('/register', [
     body('name').notEmpty().withMessage('Name is required'),
@@ -95,7 +95,7 @@ router.post('/register', [
     }
 });
 
-// @route   POST /api/auth/login
+// @route   POST /auth/login
 // @desc    Login user
 router.post('/login', [
     body('email').isEmail().withMessage('Please include a valid email'),
@@ -143,7 +143,7 @@ router.post('/login', [
     }
 });
 
-// @route   POST /api/auth/register-admin
+// @route   POST /auth/register-admin
 // @desc    Register admin user (temporary, remove in production)
 router.post('/register-admin', [
     body('name').notEmpty().withMessage('Name is required'),
@@ -190,7 +190,7 @@ router.post('/register-admin', [
     }
 });
 
-// @route   POST /api/auth/refresh-token
+// @route   POST /auth/refresh-token
 // @desc    Refresh authentication token
 router.post('/refresh-token', auth, async (req, res) => {
   try {
@@ -266,9 +266,9 @@ router.post('/reset-password', async (req, res) => {
   res.json({ message: 'Password reset successful' });
 });
 
-// @route   POST /api/auth/reset-password
+// @route   POST /auth/reset-password/first-login
 // @desc    Reset password for first login (AUTH-PROTECTED)
-router.post('/reset-password', auth, async (req, res) => {
+router.post('/reset-password/first-login', auth, async (req, res) => {
     try {
         const user = await User.findById(req.user.id).select('+password');
         if (!user) {

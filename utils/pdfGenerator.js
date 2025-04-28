@@ -23,7 +23,7 @@ async function generatePaymentReceiptPDF({
 
     // Logo
     if (logoPath && fs.existsSync(logoPath)) {
-      doc.image(logoPath, 50, 30, { width: 100 });
+      doc.image(logoPath, 20, 20, { width: 60 });
     }
     doc.fontSize(20).text('Payment Receipt', 200, 40);
     doc.moveDown();
@@ -42,10 +42,10 @@ async function generatePaymentReceiptPDF({
     doc.moveDown();
 
     doc.fontSize(14).text('Payment Details:', { underline: true });
-    doc.fontSize(12).text(`Payment Amount: ₹${paymentAmount}`);
-    doc.text(`Total Paid: ₹${totalPaid}`);
-    doc.text(`Total Loan Amount: ₹${totalLoan}`);
-    doc.text(`To Be Paid: ₹${toBePaid}`);
+    doc.fontSize(12).text(`Payment Amount: INR ${paymentAmount}`);
+    doc.text(`Total Paid: INR ${totalPaid}`);
+    doc.text(`Total Loan Amount: INR ${totalLoan}`);
+    doc.text(`To Be Paid: INR ${toBePaid}`);
     doc.moveDown();
 
     doc.text('Thank you for your payment!', { align: 'center' });

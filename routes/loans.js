@@ -97,6 +97,25 @@ router.get('/:id', auth, async (req, res) => {
     }
 });
 
+// @route   GET /api/loans/:id/payments
+// @desc    Get payment history for a loan
+router.get('/:id/payments', auth, async (req, res) => {
+    try {
+        const loan = await Loan.findById(req.params.id);
+        if (!loan) {
+            return res.status(404).json({ message: 'Loan not found' });
+        }
+        // Optionally, check if the user is authorized to view this loan's payments
+        // if (loan.user.toString() !== req.user.id) {
+        //     return res.status(401).json({ message: 'Not authorized' });
+        // }
+        res.json({ success: true, data: loan.payments || [] });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
 async function sendRepaymentEmail({ to, name, amountPaid, totalPaid, totalLoan, toBePaid }) {
   const apiInstance = new sib.TransactionalEmailsApi();
   await apiInstance.sendTransacEmail({
@@ -164,6 +183,11 @@ router.post('/:id/repay', [auth, [
         }
 
         loan.actualAmountPaid = (loan.actualAmountPaid || 0) + amount;
+
+        // Ensure loanId exists before saving (patch for legacy loans)
+        if (!loan.loanId) {
+            loan.loanId = loan._id.toString();
+        }
 
         await loan.save();
 

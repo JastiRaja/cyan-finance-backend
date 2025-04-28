@@ -165,6 +165,15 @@ router.post('/loans', [
             });
         }
 
+        // Generate custom loanId
+        const now = new Date();
+        const year = now.getFullYear() % 1000; // last 3 digits
+        const month = (now.getMonth() + 1).toString().padStart(2, '0');
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+        const loanCount = await Loan.countDocuments({ createdAt: { $gte: monthStart, $lte: monthEnd } }) + 1;
+        const loanId = `CY${year}${month}${loanCount.toString().padStart(2, '0')}`;
+
         // Log the data being sent to Loan.create
         const loanData = {
             customerId,
@@ -183,7 +192,8 @@ router.post('/loans', [
             monthlyPayment: Number(monthlyPayment),
             totalPayment: Number(totalPayment),
             status: 'active',
-            createdBy: req.user._id
+            createdBy: req.user._id,
+            loanId
         };
 
         console.log('Creating loan with data:', JSON.stringify(loanData, null, 2));
@@ -352,10 +362,14 @@ router.put('/customers/:id', [auth, adminAuth], async (req, res) => {
 // @desc    Delete a customer by ID (admin only)
 router.delete('/customers/:id', [auth, adminAuth], async (req, res) => {
   try {
-    const deleted = await User.findByIdAndDelete(req.params.id);
-    if (!deleted) {
+    const user = await User.findById(req.params.id);
+    if (!user) {
       return res.status(404).json({ message: 'Customer not found' });
     }
+    if (user.role === 'admin') {
+      return res.status(403).json({ message: 'Cannot delete an admin user.' });
+    }
+    await user.deleteOne();
     res.json({ success: true, message: 'Customer deleted successfully' });
   } catch (err) {
     console.error('Error deleting customer:', err);
@@ -465,6 +479,25 @@ router.delete('/employees/:id', [auth, adminAuth], async (req, res) => {
     res.json({ success: true, message: 'Employee deleted successfully' });
   } catch (err) {
     console.error('Error deleting employee:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// @route   PUT /api/admin/employees/:id
+// @desc    Update an employee (admin only)
+router.put('/employees/:id', [auth, adminAuth], async (req, res) => {
+  try {
+    const allowedFields = [
+      'name', 'primaryMobile', 'secondaryMobile', 'role'
+    ];
+    const update = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) update[field] = req.body[field];
+    }
+    const updated = await User.findByIdAndUpdate(req.params.id, update, { new: true });
+    if (!updated) return res.status(404).json({ message: 'Employee not found' });
+    res.json({ success: true, data: updated });
+  } catch (err) {
     res.status(500).json({ message: 'Server error' });
   }
 });

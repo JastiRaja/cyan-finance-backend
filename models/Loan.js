@@ -128,7 +128,8 @@ const loanSchema = new mongoose.Schema({
 
 // Calculate monthly payment before saving
 loanSchema.pre('save', function(next) {
-    const r = this.interestRate / 100; // Monthly interest rate
+    // Convert yearly interest rate to monthly
+    const r = (this.interestRate / 100) / 12; // Monthly interest rate from yearly
     const n = this.term; // Number of months
     const p = this.amount; // Principal amount
     
@@ -149,7 +150,8 @@ loanSchema.methods.calculateEarlyRepaymentAmount = function() {
     const endDate = this.actualRepaymentDate;
     const monthsUsed = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24 * 30.44)); // Average days per month
 
-    const r = this.interestRate / 100; // Monthly interest rate
+    // Convert yearly interest rate to monthly
+    const r = (this.interestRate / 100) / 12; // Monthly interest rate from yearly
     const p = this.amount; // Principal amount
     
     // Calculate interest for actual months used

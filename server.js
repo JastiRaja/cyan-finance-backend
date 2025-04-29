@@ -6,6 +6,8 @@ const authRoutes = require('./routes/auth');
 const loanRoutes = require('./routes/loans');
 const adminRoutes = require('./routes/admin');
 const employeeRoutes = require('./routes/employee');
+const settingsRoutes = require('./routes/settings');
+const contactRoutes = require('./routes/contact');
 
 const app = express();
 
@@ -22,10 +24,12 @@ mongoose.connect(process.env.MONGODB_URI, {
 .catch(err => console.error('MongoDB connection error:', err));
 
 // Routes
-app.use('/auth', authRoutes);
+app.use('/api/auth', authRoutes);
 app.use('/api/loans', loanRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/employee', employeeRoutes);
+app.use('/api/settings', settingsRoutes);
+app.use('/api/contact', contactRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

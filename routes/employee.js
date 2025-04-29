@@ -22,8 +22,10 @@ router.get('/check-aadhar/:aadharNumber', auth, async (req, res) => {
                     name: loan.name,
                     email: loan.email,
                     primaryMobile: loan.primaryMobile,
+                    secondaryMobile: loan.secondaryMobile || '',
                     presentAddress: loan.presentAddress,
-                    permanentAddress: loan.permanentAddress
+                    permanentAddress: loan.permanentAddress,
+                    emergencyContact: loan.emergencyContact || { mobile: '', relation: '' }
                 }
             });
         }
@@ -37,7 +39,15 @@ router.get('/check-aadhar/:aadharNumber', auth, async (req, res) => {
 // @desc    Get all loans (employee access)
 router.get('/loans', auth, async (req, res) => {
     try {
-        const loans = await Loan.find().sort({ createdAt: -1 });
+        const oneMonthAgo = new Date();
+        oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+        // Show all except loans closed > 1 month ago
+        const loans = await Loan.find({
+            $or: [
+                { status: { $ne: 'closed' } },
+                { status: 'closed', $or: [ { closedDate: { $exists: false } }, { closedDate: { $gte: oneMonthAgo } } ] }
+            ]
+        }).sort({ createdAt: -1 });
         res.json({
             success: true,
             data: loans

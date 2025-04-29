@@ -30,8 +30,10 @@ router.get('/check-aadhar/:aadharNumber', [auth, adminAuth], async (req, res) =>
                     name: loan.name,
                     email: loan.email,
                     primaryMobile: loan.primaryMobile,
+                    secondaryMobile: loan.secondaryMobile || '',
                     presentAddress: loan.presentAddress,
-                    permanentAddress: loan.permanentAddress
+                    permanentAddress: loan.permanentAddress,
+                    emergencyContact: loan.emergencyContact || { mobile: '', relation: '' }
                 }
             });
         }

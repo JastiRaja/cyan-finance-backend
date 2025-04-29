@@ -70,6 +70,9 @@ const loanSchema = new mongoose.Schema({
         enum: ['approved', 'rejected', 'active', 'closed'],
         default: 'active'
     },
+    closedDate: {
+        type: Date
+    },
     monthlyPayment: {
         type: Number,
         required: true

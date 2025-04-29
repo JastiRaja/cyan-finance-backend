@@ -180,6 +180,7 @@ router.post('/:id/repay', [auth, [
         if (loan.totalPaid >= requiredAmount) {
             loan.status = 'closed';
             loan.actualRepaymentDate = new Date();
+            loan.closedDate = new Date();
         }
 
         loan.actualAmountPaid = (loan.actualAmountPaid || 0) + amount;

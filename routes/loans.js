@@ -136,9 +136,9 @@ async function sendRepaymentEmail({ to, name, amountPaid, totalPaid, totalLoan, 
   });
 }
 
-// @route   POST /api/loans/:id/repay
-// @desc    Repay a loan (full or partial)
-router.post('/:id/repay', [auth, [
+// @route   POST /api/loans/:id/payment
+// @desc    Make a payment for a specific loan with receipt and email notification
+router.post('/:id/payment', [auth, [
     body('amount').isNumeric().withMessage('Amount must be a number'),
     body('paymentMethod').isIn(['handcash', 'online']).withMessage('Invalid payment method'),
     body('transactionId').if(body('paymentMethod').equals('online')).notEmpty().withMessage('Transaction ID is required for online payments')
@@ -160,97 +160,114 @@ router.post('/:id/repay', [auth, [
 
         const { amount, paymentMethod, transactionId } = req.body;
 
-        // Add payment to payments array
-        loan.payments = loan.payments || [];
-        loan.payments.push({
-            amount,
-            date: new Date(),
-            method: paymentMethod,
-            transactionId: paymentMethod === 'online' ? transactionId : undefined
-        });
-
-        // Update totalPaid first
-        loan.totalPaid = (loan.totalPaid || 0) + amount;
-
-        // Calculate the required amount to close the loan as of now
-        loan.actualRepaymentDate = new Date();
-        const requiredAmount = loan.calculateEarlyRepaymentAmount();
-
-        // Only close the loan if fully paid
-        if (loan.totalPaid >= requiredAmount) {
-            loan.status = 'closed';
-            loan.actualRepaymentDate = new Date();
-            loan.closedDate = new Date();
-        }
-
-        loan.actualAmountPaid = (loan.actualAmountPaid || 0) + amount;
-
-        // Ensure loanId exists before saving (patch for legacy loans)
-        if (!loan.loanId) {
-            loan.loanId = loan._id.toString();
-        }
-
-        await loan.save();
+        // Record the payment using the new method
+        const payment = await loan.recordPayment(amount, paymentMethod, transactionId);
 
         // Generate PDF receipt
         let pdfBuffer;
         try {
-          const logoPath = path.join(__dirname, '../pages/cyanlogo.png'); // Adjust if needed
-          pdfBuffer = await generatePaymentReceiptPDF({
-            customerName: loan.name,
-            paymentAmount: amount,
-            totalPaid: loan.totalPaid,
-            totalLoan: loan.amount,
-            toBePaid: requiredAmount - loan.totalPaid,
-            paymentDate: new Date().toLocaleDateString(),
-            loanId: loan.loanId,
-            logoPath
-          });
+            const logoPath = path.join(__dirname, '../pages/cyanlogo.png');
+            pdfBuffer = await generatePaymentReceiptPDF({
+                customerName: loan.name,
+                paymentAmount: amount,
+                totalPaid: loan.totalPaid,
+                totalLoan: loan.amount,
+                toBePaid: loan.remainingBalance,
+                paymentDate: new Date().toLocaleDateString(),
+                loanId: loan.loanId,
+                installmentDetails: {
+                    number: payment.installmentNumber,
+                    totalInstallments: loan.term,
+                    status: loan.installments[payment.installmentNumber - 1].status
+                },
+                logoPath
+            });
         } catch (pdfErr) {
-          console.error('Failed to generate PDF receipt:', pdfErr);
+            console.error('Failed to generate PDF receipt:', pdfErr);
         }
 
         // Send repayment email with PDF attachment
         try {
-          const transporter = nodemailer.createTransport({
-            host: 'smtp-relay.brevo.com',
-            port: 587,
-            auth: {
-              user: process.env.BREVO_SMTP_USER, // set in .env
-              pass: process.env.BREVO_SMTP_PASS  // set in .env
-            }
-          });
-          await transporter.sendMail({
-            from: `Cyan Finance <${process.env.EMAIL_FROM}>`,
-            to: loan.email,
-            subject: 'Loan Repayment Receipt',
-            text: 'Please find attached your payment receipt.',
-            attachments: pdfBuffer ? [
-              {
-                filename: 'PaymentReceipt.pdf',
-                content: pdfBuffer
-              }
-            ] : []
-          });
+            const transporter = nodemailer.createTransport({
+                host: 'smtp-relay.brevo.com',
+                port: 587,
+                auth: {
+                    user: process.env.BREVO_SMTP_USER,
+                    pass: process.env.BREVO_SMTP_PASS
+                }
+            });
+
+            // Enhanced email content with installment details
+            const emailContent = `
+                <p>Dear ${loan.name},</p>
+                <p>We have received your payment of <b>₹${amount}</b> for Loan ID: ${loan.loanId}</p>
+                <p><b>Payment Details:</b></p>
+                <ul>
+                    <li>Installment Number: ${payment.installmentNumber} of ${loan.term}</li>
+                    <li>Payment Method: ${paymentMethod}</li>
+                    ${transactionId ? `<li>Transaction ID: ${transactionId}</li>` : ''}
+                </ul>
+                <p><b>Loan Status:</b></p>
+                <ul>
+                    <li>Total Loan Amount: ₹${loan.amount}</li>
+                    <li>Total Paid: ₹${loan.totalPaid}</li>
+                    <li>Remaining Balance: ₹${loan.remainingBalance}</li>
+                </ul>
+                <p><b>Next Payment Details:</b></p>
+                <ul>
+                    ${loan.status !== 'closed' ? `
+                        <li>Next Installment Due: ${loan.installments.find(i => i.status !== 'paid')?.dueDate.toLocaleDateString()}</li>
+                        <li>Amount Due: ₹${loan.monthlyPayment}</li>
+                    ` : '<li>Loan has been fully paid</li>'}
+                </ul>
+                <p>Thank you for your payment.</p>
+                <p>Best regards,<br/>Cyan Finance</p>
+            `;
+
+            await transporter.sendMail({
+                from: `Cyan Finance <${process.env.EMAIL_FROM}>`,
+                to: loan.email,
+                subject: `Payment Confirmation - Loan ${loan.loanId}`,
+                html: emailContent,
+                attachments: pdfBuffer ? [
+                    {
+                        filename: `PaymentReceipt_${loan.loanId}_${payment.installmentNumber}.pdf`,
+                        content: pdfBuffer
+                    }
+                ] : []
+            });
         } catch (emailErr) {
-          console.error('Failed to send repayment email:', emailErr);
+            console.error('Failed to send repayment email:', emailErr);
         }
 
+        // Send response with comprehensive details
         res.json({
             success: true,
-            message: loan.status === 'closed' ? 'Loan repaid and closed successfully' : 'Partial payment received',
+            message: loan.status === 'closed' ? 'Loan repaid and closed successfully' : 'Payment recorded successfully',
             data: {
-                loanId: loan.loanId,
-                amountPaid: amount,
-                totalPaid: loan.totalPaid,
-                requiredAmount,
-                status: loan.status,
-                payments: loan.payments
+                payment,
+                loanStatus: {
+                    loanId: loan.loanId,
+                    totalPaid: loan.totalPaid,
+                    remainingBalance: loan.remainingBalance,
+                    status: loan.status,
+                    installments: loan.installments.map(inst => ({
+                        number: inst.number,
+                        dueDate: inst.dueDate,
+                        amount: inst.amount,
+                        status: inst.status,
+                        amountPaid: inst.amountPaid
+                    }))
+                },
+                nextPayment: loan.status !== 'closed' ? {
+                    dueDate: loan.installments.find(i => i.status !== 'paid')?.dueDate,
+                    amount: loan.monthlyPayment
+                } : null
             }
         });
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ message: 'Server error' });
+        console.error('Error processing payment:', err);
+        res.status(500).json({ message: err.message });
     }
 });
 

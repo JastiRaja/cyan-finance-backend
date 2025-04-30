@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { body, validationResult } = require('express-validator');
 const Loan = require('../models/Loan');
+const Customer = require('../models/Customer');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
 const adminAuth = require('../middleware/adminAuth');
@@ -79,30 +80,12 @@ router.post('/loans', [
             return res.status(400).json({ errors: errors.array() });
         }
 
-        // Check if Aadhar number already exists
-        const existingLoan = await Loan.findOne({ aadharNumber: req.body.aadharNumber });
-        if (existingLoan) {
-            return res.status(400).json({
-                errors: [{ 
-                    msg: 'Aadhar number already exists',
-                    customerDetails: {
-                        customerId: existingLoan.customerId,
-                        name: existingLoan.name,
-                        email: existingLoan.email,
-                        primaryMobile: existingLoan.primaryMobile,
-                        presentAddress: existingLoan.presentAddress,
-                        permanentAddress: existingLoan.permanentAddress
-                    }
-                }]
-            });
-        }
-
         console.log('Received request body:', JSON.stringify(req.body, null, 2));
         console.log('User from token:', req.user);
 
-        // Extract fields, handling both naming conventions
+        // Extract customer fields
         const {
-            customerId,
+            aadharNumber,
             name,
             email,
             primaryMobile,
@@ -113,9 +96,9 @@ router.post('/loans', [
             goldItems,
             interestRate,
             amount,
-            loanAmount, // Handle both names
+            loanAmount,
             term,
-            duration, // Handle both names
+            duration,
             monthlyPayment,
             totalPayment
         } = req.body;
@@ -124,29 +107,31 @@ router.post('/loans', [
         const finalAmount = amount || loanAmount;
         const finalTerm = term || duration;
 
-        // Validate required fields
-        const requiredFields = {
-            customerId,
-            name,
-            email,
-            primaryMobile,
-            presentAddress,
-            permanentAddress,
-            amount: finalAmount,
-            term: finalTerm,
-            interestRate
-        };
-
-        const missingFields = Object.entries(requiredFields)
-            .filter(([_, value]) => !value)
-            .map(([field]) => field);
-
-        if (missingFields.length > 0) {
-            return res.status(400).json({
-                errors: missingFields.map(field => ({
-                    msg: `${field} is required`
-                }))
+        // Find or create customer
+        let customer = await Customer.findOne({ aadharNumber });
+        
+        if (!customer) {
+            // Create new customer
+            customer = await Customer.create({
+                aadharNumber,
+                name,
+                email,
+                primaryMobile,
+                secondaryMobile,
+                presentAddress,
+                permanentAddress,
+                emergencyContact
             });
+        } else {
+            // Update existing customer's information
+            customer.name = name;
+            customer.email = email;
+            customer.primaryMobile = primaryMobile;
+            customer.secondaryMobile = secondaryMobile;
+            customer.presentAddress = presentAddress;
+            customer.permanentAddress = permanentAddress;
+            customer.emergencyContact = emergencyContact;
+            await customer.save();
         }
 
         // Validate goldItems array
@@ -176,17 +161,17 @@ router.post('/loans', [
         const loanCount = await Loan.countDocuments({ createdAt: { $gte: monthStart, $lte: monthEnd } }) + 1;
         const loanId = `CY${year}${month}${loanCount.toString().padStart(2, '0')}`;
 
-        // Log the data being sent to Loan.create
+        // Create new loan data
         const loanData = {
-            customerId,
-            aadharNumber: customerId, // Store Aadhar number in both fields
-            name,
-            email,
-            primaryMobile,
-            secondaryMobile,
-            presentAddress,
-            permanentAddress,
-            emergencyContact,
+            customerId: customer._id, // Use the customer's ObjectId
+            aadharNumber: customer.aadharNumber,
+            name: customer.name,
+            email: customer.email,
+            primaryMobile: customer.primaryMobile,
+            secondaryMobile: customer.secondaryMobile,
+            presentAddress: customer.presentAddress,
+            permanentAddress: customer.permanentAddress,
+            emergencyContact: customer.emergencyContact,
             goldItems,
             interestRate: Number(interestRate),
             amount: Number(finalAmount),
@@ -195,19 +180,52 @@ router.post('/loans', [
             totalPayment: Number(totalPayment),
             status: 'active',
             createdBy: req.user._id,
-            loanId
+            loanId,
+            remainingBalance: Number(totalPayment),
+            totalPaid: 0,
+            payments: []
         };
 
-        console.log('Creating loan with data:', JSON.stringify(loanData, null, 2));
+        console.log('Creating new loan with data:', JSON.stringify(loanData, null, 2));
 
-        // Create loan
-        const loan = await Loan.create(loanData);
-        console.log('Loan created successfully:', loan);
+        try {
+            // Create new loan
+            const loan = await Loan.create(loanData);
+            console.log('Loan created successfully:', loan);
 
-        res.status(201).json({
-            success: true,
-            data: loan
-        });
+            res.status(201).json({
+                success: true,
+                data: loan
+            });
+        } catch (err) {
+            console.error('Error creating loan:', err);
+            console.error('Error details:', {
+                name: err.name,
+                message: err.message,
+                stack: err.stack
+            });
+
+            // Check for specific MongoDB validation errors
+            if (err.name === 'ValidationError') {
+                const validationErrors = Object.values(err.errors).map(error => ({
+                    msg: error.message
+                }));
+                return res.status(400).json({ errors: validationErrors });
+            }
+
+            // Check for MongoDB duplicate key errors
+            if (err.code === 11000) {
+                return res.status(400).json({
+                    errors: [{ msg: 'Duplicate key error. This record already exists.' }]
+                });
+            }
+
+            res.status(500).json({ 
+                message: 'Server error',
+                error: err.message,
+                details: err.name
+            });
+        }
     } catch (err) {
         console.error('Error creating loan:', err);
         console.error('Error details:', {
@@ -261,8 +279,7 @@ router.get('/customers', [auth, adminAuth], async (req, res) => {
         const customers = await Loan.aggregate([
             {
                 $group: {
-                    _id: '$customerId',
-                    aadharNumber: { $first: '$aadharNumber' },
+                    _id: '$aadharNumber', // group by aadharNumber
                     name: { $first: '$name' },
                     email: { $first: '$email' },
                     primaryMobile: { $first: '$primaryMobile' },
@@ -280,8 +297,7 @@ router.get('/customers', [auth, adminAuth], async (req, res) => {
             },
             {
                 $project: {
-                    _id: 1,
-                    aadharNumber: 1,
+                    aadharNumber: '$_id',
                     name: 1,
                     email: 1,
                     primaryMobile: 1,
@@ -290,20 +306,14 @@ router.get('/customers', [auth, adminAuth], async (req, res) => {
                     permanentAddress: 1,
                     emergencyContact: 1,
                     totalLoans: 1,
-                    activeLoans: 1
+                    activeLoans: 1,
+                    _id: 0
                 }
             }
         ]);
-
-        // Fetch the actual User _id for each customerId (aadhar)
-        const users = await User.find({});
-        const userMap = {};
-        users.forEach(u => { userMap[u.email] = u._id; });
-        const customersWithMongoId = customers.map(c => ({ ...c, mongoId: userMap[c.email] || null }));
-
         res.json({
             success: true,
-            data: customersWithMongoId
+            data: customers
         });
     } catch (err) {
         console.error('Error fetching customers:', err);

@@ -11,11 +11,39 @@ const emergencyContactSchema = new mongoose.Schema({
     relation: String
 });
 
+const paymentSchema = new mongoose.Schema({
+    amount: {
+        type: Number,
+        required: true
+    },
+    date: { 
+        type: Date, 
+        default: Date.now 
+    },
+    method: {
+        type: String,
+        enum: ['handcash', 'online'],
+        required: true
+    },
+    transactionId: String,
+    // Track which month's installment this payment is for
+    installmentNumber: {
+        type: Number,
+        required: true
+    },
+    // Store the remaining balance after this payment
+    remainingBalance: {
+        type: Number,
+        required: true
+    }
+});
+
 const loanSchema = new mongoose.Schema({
     customerId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Customer',
-        required: true
+        required: true,
+        index: true
     },
     aadharNumber: {
         type: String,
@@ -25,7 +53,8 @@ const loanSchema = new mongoose.Schema({
                 return /^\d{12}$/.test(v);
             },
             message: props => `${props.value} is not a valid Aadhar number! It should be 12 digits.`
-        }
+        },
+        index: true
     },
     name: {
         type: String,
@@ -81,11 +110,33 @@ const loanSchema = new mongoose.Schema({
         type: Number,
         required: true
     },
+    // Track monthly installments separately
+    installments: [{
+        number: Number,
+        dueDate: Date,
+        amount: Number,
+        status: {
+            type: String,
+            enum: ['pending', 'partial', 'paid'],
+            default: 'pending'
+        },
+        amountPaid: {
+            type: Number,
+            default: 0
+        }
+    }],
     actualRepaymentDate: {
         type: Date
     },
     actualAmountPaid: {
-        type: Number
+        type: Number,
+        default: 0
+    },
+    remainingBalance: {
+        type: Number,
+        default: function() {
+            return this.totalPayment;
+        }
     },
     paymentMethod: {
         type: String,
@@ -112,12 +163,7 @@ const loanSchema = new mongoose.Schema({
         type: Date,
         default: Date.now
     },
-    payments: [{
-        amount: Number,
-        date: { type: Date, default: Date.now },
-        method: String,
-        transactionId: String
-    }],
+    payments: [paymentSchema],
     totalPaid: {
         type: Number,
         default: 0
@@ -129,24 +175,92 @@ const loanSchema = new mongoose.Schema({
     }
 });
 
-// Calculate monthly payment before saving
+// Add index explicitly
+loanSchema.index({ aadharNumber: 1 }, { unique: false });
+
+// Calculate monthly payment and set up installments before saving
 loanSchema.pre('save', function(next) {
-    // Convert yearly interest rate to monthly
-    const r = (this.interestRate / 100) / 12; // Monthly interest rate from yearly
-    const n = this.term; // Number of months
-    const p = this.amount; // Principal amount
-    
-    // Monthly payment formula: P * r * (1 + r)^n / ((1 + r)^n - 1)
-    this.monthlyPayment = (p * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
-    this.totalPayment = this.monthlyPayment * n;
-    
+    if (this.isNew) {
+        // Convert yearly interest rate to monthly
+        const r = (this.interestRate / 100) / 12; // Monthly interest rate from yearly
+        const n = this.term; // Number of months
+        const p = this.amount; // Principal amount
+        
+        // Monthly payment formula: P * r * (1 + r)^n / ((1 + r)^n - 1)
+        this.monthlyPayment = (p * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+        this.totalPayment = this.monthlyPayment * n;
+        this.remainingBalance = this.totalPayment;
+
+        // Create installment schedule
+        this.installments = [];
+        let currentDate = new Date(this.createdAt);
+        
+        for (let i = 1; i <= this.term; i++) {
+            // Add one month to the date
+            currentDate = new Date(currentDate);
+            currentDate.setMonth(currentDate.getMonth() + 1);
+            
+            this.installments.push({
+                number: i,
+                dueDate: new Date(currentDate),
+                amount: this.monthlyPayment,
+                status: 'pending',
+                amountPaid: 0
+            });
+        }
+    }
     next();
 });
+
+// Method to record a payment
+loanSchema.methods.recordPayment = async function(paymentAmount, paymentMethod, transactionId = null) {
+    // Find the first unpaid or partially paid installment
+    const currentInstallment = this.installments.find(inst => 
+        inst.status === 'pending' || inst.status === 'partial'
+    );
+
+    if (!currentInstallment) {
+        throw new Error('No pending installments found');
+    }
+
+    // Calculate how much can be applied to current installment
+    const remainingForInstallment = currentInstallment.amount - currentInstallment.amountPaid;
+    const appliedToInstallment = Math.min(paymentAmount, remainingForInstallment);
+
+    // Update installment
+    currentInstallment.amountPaid += appliedToInstallment;
+    currentInstallment.status = currentInstallment.amountPaid >= currentInstallment.amount ? 'paid' : 'partial';
+
+    // Create payment record
+    const payment = {
+        amount: paymentAmount,
+        method: paymentMethod,
+        transactionId,
+        installmentNumber: currentInstallment.number,
+        remainingBalance: this.remainingBalance - paymentAmount
+    };
+
+    // Update loan totals
+    this.totalPaid += paymentAmount;
+    this.remainingBalance -= paymentAmount;
+    this.payments.push(payment);
+
+    // Check if loan is fully paid
+    if (this.remainingBalance <= 0) {
+        this.status = 'closed';
+        this.closedDate = new Date();
+        this.actualRepaymentDate = new Date();
+        this.actualAmountPaid = this.totalPaid;
+    }
+
+    await this.save();
+    return payment;
+};
 
 // Add method to calculate early repayment amount
 loanSchema.methods.calculateEarlyRepaymentAmount = function() {
     if (!this.actualRepaymentDate) {
-        return this.totalPayment;
+        return this.remainingBalance;
     }
 
     const startDate = this.createdAt;
@@ -161,7 +275,7 @@ loanSchema.methods.calculateEarlyRepaymentAmount = function() {
     const interestForUsedMonths = p * r * monthsUsed;
     const totalAmountForUsedMonths = p + interestForUsedMonths;
 
-    return Math.round(totalAmountForUsedMonths);
+    return Math.round(Math.max(totalAmountForUsedMonths - this.totalPaid, 0));
 };
 
 module.exports = mongoose.model('Loan', loanSchema); 

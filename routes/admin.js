@@ -386,6 +386,13 @@ router.put('/customers/:aadharNumber', [auth, adminAuth], async (req, res) => {
       { new: true }
     );
     if (!updated) return res.status(404).json({ message: 'Customer not found' });
+
+    // Also update all Loan documents for this customer
+    await Loan.updateMany(
+      { aadharNumber: req.params.aadharNumber },
+      { $set: update }
+    );
+
     res.json({ success: true, data: updated });
   } catch (err) {
     res.status(500).json({ message: 'Server error' });
@@ -532,6 +539,38 @@ router.put('/employees/:id', [auth, adminAuth], async (req, res) => {
     if (!updated) return res.status(404).json({ message: 'Employee not found' });
     res.json({ success: true, data: updated });
   } catch (err) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// @route   POST /api/admin/sync-customers-from-loans
+// @desc    Sync all unique customers from Loan collection to Customer collection
+router.post('/sync-customers-from-loans', [auth, adminAuth], async (req, res) => {
+  try {
+    const loans = await Loan.aggregate([
+      { $group: { _id: '$aadharNumber', doc: { $first: '$$ROOT' } } }
+    ]);
+    let created = 0;
+    for (const { _id: aadharNumber, doc } of loans) {
+      if (!aadharNumber) continue;
+      const exists = await Customer.findOne({ aadharNumber });
+      if (!exists) {
+        await Customer.create({
+          aadharNumber,
+          name: doc.name,
+          email: doc.email,
+          primaryMobile: doc.primaryMobile,
+          secondaryMobile: doc.secondaryMobile,
+          presentAddress: doc.presentAddress,
+          permanentAddress: doc.permanentAddress,
+          emergencyContact: doc.emergencyContact
+        });
+        created++;
+      }
+    }
+    res.json({ success: true, message: `Sync complete! ${created} customers created.` });
+  } catch (err) {
+    console.error('Error syncing customers:', err);
     res.status(500).json({ message: 'Server error' });
   }
 });

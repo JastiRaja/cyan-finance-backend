@@ -279,7 +279,8 @@ router.get('/customers', [auth, adminAuth], async (req, res) => {
         const customers = await Loan.aggregate([
             {
                 $group: {
-                    _id: '$aadharNumber', // group by aadharNumber
+                    _id: '$aadharNumber',
+                    mongoId: { $first: '$_id' },
                     name: { $first: '$name' },
                     email: { $first: '$email' },
                     primaryMobile: { $first: '$primaryMobile' },
@@ -296,8 +297,25 @@ router.get('/customers', [auth, adminAuth], async (req, res) => {
                 }
             },
             {
+                $lookup: {
+                    from: 'users',
+                    localField: '_id',
+                    foreignField: 'aadharNumber',
+                    as: 'userDoc'
+                }
+            },
+            {
+                $addFields: {
+                    userId: { $arrayElemAt: ['$userDoc._id', 0] },
+                    role: { $arrayElemAt: ['$userDoc.role', 0] }
+                }
+            },
+            {
                 $project: {
                     aadharNumber: '$_id',
+                    mongoId: 1,
+                    userId: 1,
+                    role: 1,
                     name: 1,
                     email: 1,
                     primaryMobile: 1,
@@ -350,9 +368,9 @@ router.put('/loans/:id', [auth, adminAuth], async (req, res) => {
   }
 });
 
-// @route   PUT /api/admin/customers/:id
+// @route   PUT /api/admin/customers/:aadharNumber
 // @desc    Update a customer as admin
-router.put('/customers/:id', [auth, adminAuth], async (req, res) => {
+router.put('/customers/:aadharNumber', [auth, adminAuth], async (req, res) => {
   try {
     const allowedFields = [
       'name', 'email', 'primaryMobile', 'secondaryMobile',
@@ -362,7 +380,11 @@ router.put('/customers/:id', [auth, adminAuth], async (req, res) => {
     for (const field of allowedFields) {
       if (req.body[field] !== undefined) update[field] = req.body[field];
     }
-    const updated = await User.findByIdAndUpdate(req.params.id, update, { new: true });
+    const updated = await Customer.findOneAndUpdate(
+      { aadharNumber: req.params.aadharNumber },
+      update,
+      { new: true }
+    );
     if (!updated) return res.status(404).json({ message: 'Customer not found' });
     res.json({ success: true, data: updated });
   } catch (err) {
@@ -370,11 +392,11 @@ router.put('/customers/:id', [auth, adminAuth], async (req, res) => {
   }
 });
 
-// @route   DELETE /api/admin/customers/:id
-// @desc    Delete a customer by ID (admin only)
-router.delete('/customers/:id', [auth, adminAuth], async (req, res) => {
+// @route   DELETE /api/admin/customers/:aadharNumber
+// @desc    Delete a customer by aadhar number (admin only)
+router.delete('/customers/:aadharNumber', [auth, adminAuth], async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
+    const user = await User.findOne({ aadharNumber: req.params.aadharNumber });
     if (!user) {
       return res.status(404).json({ message: 'Customer not found' });
     }

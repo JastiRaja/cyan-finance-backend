@@ -67,6 +67,7 @@ router.get('/customers', auth, async (req, res) => {
             {
                 $group: {
                     _id: '$aadharNumber',
+                    mongoId: { $first: '$_id' },
                     name: { $first: '$name' },
                     email: { $first: '$email' },
                     primaryMobile: { $first: '$primaryMobile' },
@@ -85,6 +86,7 @@ router.get('/customers', auth, async (req, res) => {
             {
                 $project: {
                     aadharNumber: '$_id',
+                    mongoId: 1,
                     name: 1,
                     email: 1,
                     primaryMobile: 1,

@@ -109,6 +109,7 @@ router.post('/loans', [
 
         // Find or create customer
         let customer = await Customer.findOne({ aadharNumber });
+        let isNewCustomer = false;
         
         if (!customer) {
             // Create new customer
@@ -122,6 +123,31 @@ router.post('/loans', [
                 permanentAddress,
                 emergencyContact
             });
+            isNewCustomer = true;
+
+            // Send welcome email to new customer
+            try {
+                await sendBrevoEmail({
+                    to: email,
+                    subject: 'Welcome to Cyan Finance',
+                    html: `
+                        <p>Dear ${name},</p>
+                        <p>Welcome to Cyan Finance! We're pleased to have you as our customer.</p>
+                        <p>Your account has been successfully created with the following details:</p>
+                        <ul>
+                            <li>Name: ${name}</li>
+                            <li>Email: ${email}</li>
+                            <li>Primary Mobile: ${primaryMobile}</li>
+                            ${secondaryMobile ? `<li>Secondary Mobile: ${secondaryMobile}</li>` : ''}
+                        </ul>
+                        <p>If you have any questions or need assistance, please don't hesitate to contact us.</p>
+                        <p>Best regards,<br/>Cyan Finance Team</p>
+                    `
+                });
+            } catch (emailErr) {
+                console.error('Failed to send welcome email:', emailErr);
+                // Continue with loan creation even if email fails
+            }
         } else {
             // Update existing customer's information
             customer.name = name;
@@ -163,7 +189,7 @@ router.post('/loans', [
 
         // Create new loan data
         const loanData = {
-            customerId: customer._id, // Use the customer's ObjectId
+            customerId: customer._id,
             aadharNumber: customer.aadharNumber,
             name: customer.name,
             email: customer.email,
@@ -192,6 +218,39 @@ router.post('/loans', [
             // Create new loan
             const loan = await Loan.create(loanData);
             console.log('Loan created successfully:', loan);
+
+            // Send loan confirmation email
+            try {
+                await sendBrevoEmail({
+                    to: loan.email,
+                    subject: 'Loan Confirmation - Cyan Finance',
+                    html: `
+                        <p>Dear ${loan.name},</p>
+                        <p>Your loan has been successfully created with the following details:</p>
+                        <p><b>Loan Details:</b></p>
+                        <ul>
+                            <li>Loan ID: ${loan.loanId}</li>
+                            <li>Loan Amount: ₹${loan.amount}</li>
+                            <li>Term: ${loan.term} months</li>
+                            <li>Interest Rate: ${loan.interestRate}%</li>
+                            <li>Monthly Payment: ₹${loan.monthlyPayment}</li>
+                            <li>Total Payment: ₹${loan.totalPayment}</li>
+                        </ul>
+                        <p><b>Gold Items:</b></p>
+                        <ul>
+                            ${loan.goldItems.map(item => `
+                                <li>${item.description} - Gross Weight: ${item.grossWeight}g, Net Weight: ${item.netWeight}g</li>
+                            `).join('')}
+                        </ul>
+                        <p>Please ensure timely payment of your monthly installments.</p>
+                        <p>If you have any questions, please don't hesitate to contact us.</p>
+                        <p>Best regards,<br/>Cyan Finance Team</p>
+                    `
+                });
+            } catch (emailErr) {
+                console.error('Failed to send loan confirmation email:', emailErr);
+                // Continue with response even if email fails
+            }
 
             res.status(201).json({
                 success: true,

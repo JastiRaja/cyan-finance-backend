@@ -1,9 +1,10 @@
+require('dotenv').config();
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 
-// Connect to MongoDB
-mongoose.connect('mongodb://localhost:27017/cyan_finance', {
+// Connect to MongoDB using connection string from .env
+mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
   serverSelectionTimeoutMS: 30000 // 30 seconds timeout
@@ -18,20 +19,16 @@ mongoose.connect('mongodb://localhost:27017/cyan_finance', {
 const createAdmin = async () => {
   try {
     // Check if admin already exists
-    const adminExists = await User.findOne({ email: 'admin@example.com' });
+    const adminExists = await User.findOne({ email: 'rajajasti500@gmail.com' });
     if (adminExists) {
       console.log('Admin user already exists');
       process.exit(0);
     }
 
-    // Hash password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash('admin@123', salt);
-
-    // Create admin user
+    // Create admin user (password will be hashed by the User model's pre-save hook)
     const admin = new User({
-      email: 'admin@example.com',
-      password: hashedPassword,
+      email: 'rajajasti500@gmail.com',
+      password: 'admin@123', // Plain password - will be hashed automatically
       role: 'admin',
       name: 'Admin User'
     });
